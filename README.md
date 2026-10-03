@@ -1,6 +1,6 @@
 # Foxhollow Player Cheats
 
-A native mod that adds optional player cheats to Star Fox Adventures running through Foxhollow.
+A native mod that adds player cheats to Star Fox Adventures running through Foxhollow.
 
 ## Controls
 
@@ -11,7 +11,7 @@ A native mod that adds optional player cheats to Star Fox Adventures running thr
 | 3 | Toggle Infinite Magic |
 | 4 | Toggle Infinite Tricky Energy |
 
-- Use the number-row keys. Press a key once to enable the cheat and press it again to disable it. Holding a key does not toggle it repeatedly.
+- Keys 1-4 work on both the number row and the numeric keypad (with Num Lock on). Press once to enable a cheat and press again to disable it. Holding either version of a key does not toggle repeatedly.
 - Keys work during gameplay while the game window is focused.
 - All cheats start off and reset when you leave the current save (returning to the title screen, the save select or a soft reset). Warps, loading screens, shops and Arwing flights keep them enabled.
 - Infinite Tricky Energy only acts while Tricky is present.
