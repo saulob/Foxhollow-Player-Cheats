@@ -26,6 +26,10 @@ A native mod that adds optional player cheats to Star Fox Adventures running thr
 
 God Mode, Fast Movement and Infinite Magic work for both Fox and Krystal.
 
+## Related cheat mod
+
+This mod can be installed alongside [Cheats - Arwing](https://github.com/saulob/Foxhollow-Arwing-Cheats). Both mods use keys 1-4, but their hotkeys do not overlap: Cheats - Player handles them during normal player gameplay, while Cheats - Arwing handles them only while flying the Arwing.
+
 ## Installation
 
 **Recommended:** install through the Foxhollow Launcher once the mod is published there.
