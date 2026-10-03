@@ -29,6 +29,7 @@ typedef struct CheatGroup {
   int symbolCount;
   Hook* hooks;
   int hookCount;
+  int needsSharedHooks;
 } CheatGroup;
 
 typedef struct HealthGuard {
@@ -58,7 +59,6 @@ static void (*origPlayerAddRemoveMagic)(GameObject*, int);
 static void (*origPlayerCastSpell)(GameObject*, PlayerState*, int);
 static int (*origPlayerStateClimbWall)(GameObject*, PlayerState*);
 static int (*origPlayerStateOnLadder)(GameObject*, PlayerState*);
-static void (*origPlayerUpdateVelocityFromMotion)(GameObject*, PlayerState*, void*, float);
 static int (*origObjMove)(GameObject*, float, float, float);
 
 /* God Mode. The game subtracts damage inline in several places, so the hooks
@@ -129,18 +129,6 @@ static int hookObjHitsGetPriorityHitWithPosition(GameObject* obj, GameObject** h
   return priority;
 }
 
-/* Sinking surfaces drain one health per tick inside this function. */
-static void hookPlayerUpdateSurfaceResponse(GameObject* obj, PlayerState* state, PlayerState* cfg, float dt) {
-  HealthGuard guard = {NULL, 0};
-  PlayerStatus* status = gCheatOn[CHEAT_GOD_MODE] ? playerStatusOf(obj) : NULL;
-
-  if (status != NULL && status->health > 0) {
-    guard_health(&guard, status, status->health);
-  }
-  origPlayerUpdateSurfaceResponse(obj, state, cfg, dt);
-  release_health(&guard);
-}
-
 /* Infinite Magic. Spells subtract their cost inline inside the player state
    functions, so each of them is wrapped and any magic it spent is refunded
    when it returns. */
@@ -208,11 +196,12 @@ static int hookPlayerStateOnLadder(GameObject* obj, PlayerState* state) {
   return scale_climb_speed(obj, state, origPlayerStateOnLadder(obj, state));
 }
 
-/* playerUpdate calls this right before the objMove that applies the player's
-   horizontal velocity, so the next objMove for the player is that one. The
-   shared controller moves the player earlier in the frame and stays 1x. */
-static void hookPlayerUpdateVelocityFromMotion(GameObject* obj, PlayerState* state, void* baddie, float dt) {
-  origPlayerUpdateVelocityFromMotion(obj, state, baddie, dt);
+/* playerUpdate is the only caller of playerUpdateSurfaceResponse. After it
+   returns, playerUpdate runs playerUpdateVelocityFromMotion and clamps the
+   velocity, then calls the objMove that applies the player's velocity, with no
+   other objMove in between. Arming the player here makes that main objMove the
+   next one for the player, so it is the only move scaled. */
+static void arm_main_move(GameObject* obj) {
   sMainMoveObj = gCheatOn[CHEAT_FAST_MOVEMENT] && obj == game.Obj_GetPlayerObject() ? obj : NULL;
 }
 
@@ -225,6 +214,21 @@ static int hookObjMove(GameObject* obj, float dx, float dy, float dz) {
     }
   }
   return origObjMove(obj, dx, dy, dz);
+}
+
+/* Shared by God Mode and Fast Movement. Sinking surfaces drain one health per
+   tick inside this function. Fast Movement arms its marker last, once the
+   original has returned and the health guard is released. */
+static void hookPlayerUpdateSurfaceResponse(GameObject* obj, PlayerState* state, PlayerState* cfg, float dt) {
+  HealthGuard guard = {NULL, 0};
+  PlayerStatus* status = gCheatOn[CHEAT_GOD_MODE] ? playerStatusOf(obj) : NULL;
+
+  if (status != NULL && status->health > 0) {
+    guard_health(&guard, status, status->health);
+  }
+  origPlayerUpdateSurfaceResponse(obj, state, cfg, dt);
+  release_health(&guard);
+  arm_main_move(obj);
 }
 
 static const Symbol kCoreSymbols[] = {
@@ -255,8 +259,6 @@ static Hook sGodModeHooks[] = {
     {"playerProcessHitResponse", (HookFn)hookPlayerProcessHitResponse, (void**)&origPlayerProcessHitResponse, NULL},
     {"ObjHits_GetPriorityHitWithPosition", (HookFn)hookObjHitsGetPriorityHitWithPosition,
      (void**)&origObjHitsGetPriorityHitWithPosition, NULL},
-    {"playerUpdateSurfaceResponse", (HookFn)hookPlayerUpdateSurfaceResponse, (void**)&origPlayerUpdateSurfaceResponse,
-     NULL},
 };
 
 #define MAGIC_STATE_HOOK_ENTRY(name) {#name, (HookFn)hook_##name, (void**)&orig_##name, NULL}
@@ -275,19 +277,23 @@ static Hook sInfiniteMagicHooks[] = {
 static Hook sFastMovementHooks[] = {
     {"playerStateClimbWall", (HookFn)hookPlayerStateClimbWall, (void**)&origPlayerStateClimbWall, NULL},
     {"playerStateOnLadder", (HookFn)hookPlayerStateOnLadder, (void**)&origPlayerStateOnLadder, NULL},
-    {"playerUpdateVelocityFromMotion", (HookFn)hookPlayerUpdateVelocityFromMotion,
-     (void**)&origPlayerUpdateVelocityFromMotion, NULL},
     {"objMove", (HookFn)hookObjMove, (void**)&origObjMove, NULL},
+};
+
+/* Installed once for every group that sets needsSharedHooks. */
+static Hook sSharedHooks[] = {
+    {"playerUpdateSurfaceResponse", (HookFn)hookPlayerUpdateSurfaceResponse, (void**)&origPlayerUpdateSurfaceResponse,
+     NULL},
 };
 
 #define COUNT_OF(array) ((int)(sizeof(array) / sizeof((array)[0])))
 
 static CheatGroup sGroups[] = {
-    {CHEAT_GOD_MODE, kGodModeSymbols, COUNT_OF(kGodModeSymbols), sGodModeHooks, COUNT_OF(sGodModeHooks)},
+    {CHEAT_GOD_MODE, kGodModeSymbols, COUNT_OF(kGodModeSymbols), sGodModeHooks, COUNT_OF(sGodModeHooks), 1},
     {CHEAT_INFINITE_MAGIC, kInfiniteMagicSymbols, COUNT_OF(kInfiniteMagicSymbols), sInfiniteMagicHooks,
-     COUNT_OF(sInfiniteMagicHooks)},
-    {CHEAT_FAST_MOVEMENT, NULL, 0, sFastMovementHooks, COUNT_OF(sFastMovementHooks)},
-    {CHEAT_INFINITE_TRICKY_ENERGY, kTrickySymbols, COUNT_OF(kTrickySymbols), NULL, 0},
+     COUNT_OF(sInfiniteMagicHooks), 0},
+    {CHEAT_FAST_MOVEMENT, NULL, 0, sFastMovementHooks, COUNT_OF(sFastMovementHooks), 1},
+    {CHEAT_INFINITE_TRICKY_ENERGY, kTrickySymbols, COUNT_OF(kTrickySymbols), NULL, 0, 0},
 };
 
 static int resolve_symbols(FhMod* mod, const FhModHost* host, const Symbol* symbols, int count, FhLogLevel level) {
@@ -337,24 +343,34 @@ static int install_hooks(FhMod* mod, const FhModHost* host, Hook* hooks, int cou
   return 1;
 }
 
+/* The shared hooks go in first, and come out again when no group that needs
+   them ended up available. */
 int playerHooksInstall(FhMod* mod, const FhModHost* host) {
+  int sharedOk;
+  int sharedUsed = 0;
   int available = 0;
   int i;
 
   if (!resolve_symbols(mod, host, kCoreSymbols, COUNT_OF(kCoreSymbols), FH_LOG_ERROR)) {
     return 0;
   }
+  sharedOk = install_hooks(mod, host, sSharedHooks, COUNT_OF(sSharedHooks), FH_LOG_WARN);
   for (i = 0; i < COUNT_OF(sGroups); i++) {
     CheatGroup* group = &sGroups[i];
-    int ok = resolve_symbols(mod, host, group->symbols, group->symbolCount, FH_LOG_WARN) &&
+    int ok = (!group->needsSharedHooks || sharedOk) &&
+             resolve_symbols(mod, host, group->symbols, group->symbolCount, FH_LOG_WARN) &&
              install_hooks(mod, host, group->hooks, group->hookCount, FH_LOG_WARN);
 
     gCheatAvailable[group->cheat] = (unsigned char)ok;
     if (ok) {
       available++;
+      sharedUsed |= group->needsSharedHooks;
     } else {
       modLog(FH_LOG_WARN, "%s unavailable: required game symbols or hooks are missing", gCheatNames[group->cheat]);
     }
+  }
+  if (!sharedUsed) {
+    remove_hooks(mod, host, sSharedHooks, COUNT_OF(sSharedHooks));
   }
   return available > 0;
 }
@@ -366,6 +382,7 @@ void playerHooksRemove(FhMod* mod, const FhModHost* host) {
     remove_hooks(mod, host, sGroups[i].hooks, sGroups[i].hookCount);
     gCheatAvailable[sGroups[i].cheat] = 0;
   }
+  remove_hooks(mod, host, sSharedHooks, COUNT_OF(sSharedHooks));
   sMessageObj = NULL;
   sHitObj = NULL;
   sHitGuard.status = NULL;

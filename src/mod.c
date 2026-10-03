@@ -52,7 +52,7 @@ FH_MOD_EXPORT int fh_mod_initialize(FhMod* mod, const FhModHost* host) {
     modLog(FH_LOG_ERROR, "disabled: required host symbols or hooks are unavailable");
     return FH_MOD_ERROR;
   }
-  modLog(FH_LOG_INFO, "v1.0.1 loaded (1 God Mode, 2 Fast Movement, 3 Infinite Magic, 4 Infinite Tricky Energy)");
+  modLog(FH_LOG_INFO, "v1.0.2 loaded (1 God Mode, 2 Fast Movement, 3 Infinite Magic, 4 Infinite Tricky Energy)");
   return FH_MOD_OK;
 }
 

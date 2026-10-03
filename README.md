@@ -26,6 +26,10 @@ A native mod that adds player cheats to Star Fox Adventures running through Foxh
 
 God Mode, Fast Movement and Infinite Magic work for both Fox and Krystal.
 
+## Compatibility
+
+Compatible with [Foxhollow Fly Mode](https://github.com/saulob/Foxhollow-Fly-Mode); both mods can be installed and used together.
+
 ## Installation
 
 **Recommended:** install through the Foxhollow Launcher once the mod is published there.
