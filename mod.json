@@ -1,0 +1,10 @@
+{
+  "id": "com.saulob.cheats-player",
+  "name": "Cheats - Player",
+  "version": "1.0.0",
+  "author": "saulob",
+  "description": "Optional player cheats for Star Fox Adventures using keys 1-4: God Mode (1), Fast Movement 2x for running, ladders and swimming (2), Infinite Magic (3) and Infinite Tricky Energy (4)",
+  "compatibility": {
+    "abi": 2
+  }
+}
