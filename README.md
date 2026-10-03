@@ -1,4 +1,4 @@
-# Foxhollow Player Cheats
+# Foxhollow Player - Cheats
 
 A native mod that adds player cheats to Star Fox Adventures running through Foxhollow.
 
