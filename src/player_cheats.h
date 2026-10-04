@@ -6,9 +6,10 @@
 
 #include "foxhollow_mod_api.h"
 
-/* Partial x64 layouts of the game records the cheats touch. The offsets match
-   what playerGetCurHealth, playerGetMaxMagic and playerState41 read and write
-   in the Foxhollow build. */
+/* Partial native 64-bit layouts of the game records the cheats touch, the same
+   on every supported Foxhollow target. The offsets match what
+   playerGetCurHealth, playerGetMaxMagic and playerState41 read and write in
+   the Foxhollow build. */
 typedef struct GameObject {
   uint8_t pad000[0x100];
   void* extra;

@@ -1,5 +1,7 @@
 /build/
+/build-*/
 /dist/
+/artifacts/
 /cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
@@ -8,6 +10,8 @@ cmake_install.cmake
 *.vcxproj.filters
 *.sln
 *.dll
+*.so
+*.dylib
 *.exe
 *.obj
 *.pdb

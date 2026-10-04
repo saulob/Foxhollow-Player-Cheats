@@ -1,0 +1,203 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE: com.saulob.cheats-player
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-amd64
+            os: windows-latest
+            configure: -A x64
+            library: mod.dll
+            file_pattern: 'PE32\+ .*DLL.*x86-64'
+          - platform: linux-amd64
+            os: ubuntu-24.04
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release
+            library: mod.so
+            file_pattern: 'ELF 64-bit LSB shared object, x86-64'
+            allowed_needed: libc.so.6
+          - platform: linux-arm64
+            os: ubuntu-24.04-arm
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release
+            library: mod.so
+            file_pattern: 'ELF 64-bit LSB shared object, ARM aarch64'
+            # Ubuntu's aarch64 toolchain records the dynamic loader as a NEEDED entry.
+            allowed_needed: libc.so.6 ld-linux-aarch64.so.1
+          - platform: macos-arm64
+            os: macos-latest
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+            library: mod.so
+            arch: arm64
+            file_pattern: 'Mach-O 64-bit .*arm64'
+          - platform: macos-x86_64
+            os: macos-latest
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+            library: mod.so
+            arch: x86_64
+            file_pattern: 'Mach-O 64-bit .*x86_64'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.configure }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Check package
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "\"id\": \"$PACKAGE\"" mod.json || { echo "mod.json id is not $PACKAGE"; exit 1; }
+          version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' mod.json)"
+          echo "version: $version"
+          grep -q "^project(player_cheats VERSION $version " CMakeLists.txt || { echo "CMake project version is not $version"; exit 1; }
+          lib="build/$PACKAGE/lib/${{ matrix.platform }}/${{ matrix.library }}"
+          echo "LIB=$lib" >> "$GITHUB_ENV"
+          cmp mod.json "build/$PACKAGE/mod.json"
+          actual="$(cd "build/$PACKAGE" && find . -type f | sort)"
+          expected="$(printf '%s\n' ./lib/${{ matrix.platform }}/${{ matrix.library }} ./mod.json | sort)"
+          echo "$actual"
+          [ "$actual" = "$expected" ] || { echo "unexpected package layout, expected:"; echo "$expected"; exit 1; }
+          file "$lib"
+          file "$lib" | grep -E '${{ matrix.file_pattern }}' > /dev/null || { echo "wrong binary type for ${{ matrix.platform }}"; exit 1; }
+          grep -aq "v$version loaded" "$lib" || { echo "startup log does not say v$version"; exit 1; }
+
+      # Windows reads the keyboard through user32; anything beyond the system
+      # and C runtime DLLs, SDL included, is unexpected.
+      - name: Inspect library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin.exe not found' }
+          $headers = & $dumpbin /nologo /headers $env:LIB
+          if (-not ($headers -match 'machine \(x64\)')) { throw 'mod.dll is not x64' }
+          $deps = & $dumpbin /nologo /dependents $env:LIB | Where-Object { $_ -match '^\s+\S+\.dll$' } | ForEach-Object { $_.Trim() }
+          'Dependencies:'; $deps | ForEach-Object { "  $_" }
+          $bad = $deps | Where-Object { $_ -notmatch '^(KERNEL32|USER32|VCRUNTIME140|api-ms-win-crt-[a-z0-9-]+)\.dll$' }
+          if ($bad) { throw "unexpected dependency: $bad" }
+          $exports = & $dumpbin /nologo /exports $env:LIB | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+\S+$' } | ForEach-Object { ($_.Trim() -split '\s+')[3] } | Sort-Object
+          'Exports:'; $exports | ForEach-Object { "  $_" }
+          if (($exports -join ',') -ne 'fh_mod_initialize,fh_mod_shutdown,fh_mod_update') { throw 'exports must be exactly fh_mod_initialize, fh_mod_shutdown and fh_mod_update' }
+
+      # Linux and macOS look up SDL in Foxhollow at load time, so the library
+      # must neither link nor import SDL, X11 or Wayland.
+      - name: Inspect library (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          readelf -h "$LIB" | grep -E 'Class|Machine'
+          readelf -d "$LIB"
+          needed="$(readelf -d "$LIB" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+          [ -n "$needed" ] || { echo "no NEEDED entries found"; exit 1; }
+          for dep in $needed; do
+            case " ${{ matrix.allowed_needed }} " in
+              *" $dep "*) echo "allowed NEEDED: $dep" ;;
+              *) echo "unexpected NEEDED: $dep (allowed: ${{ matrix.allowed_needed }})"; exit 1 ;;
+            esac
+          done
+          if readelf -d "$LIB" | grep -E 'RPATH|RUNPATH'; then echo "unexpected RPATH/RUNPATH"; exit 1; fi
+          ldd "$LIB"
+          nm -D --undefined-only "$LIB"
+          if nm -D --undefined-only "$LIB" | grep -iE 'SDL|X11|wl_|wayland|xkb'; then echo "unexpected SDL/X11/Wayland import"; exit 1; fi
+          exports="$(nm -D --defined-only "$LIB" | awk '{print $3}' | sort | paste -s -d, -)"
+          echo "exports: $exports"
+          [ "$exports" = "fh_mod_initialize,fh_mod_shutdown,fh_mod_update" ] || { echo "exports must be exactly fh_mod_initialize, fh_mod_shutdown and fh_mod_update"; exit 1; }
+
+      - name: Inspect library (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          archs="$(lipo -archs "$LIB")"
+          echo "archs: $archs"
+          [ "$archs" = "${{ matrix.arch }}" ] || { echo "expected a thin ${{ matrix.arch }} library"; exit 1; }
+          otool -hv "$LIB"
+          otool -L "$LIB"
+          id="$(otool -D "$LIB" | tail -n +2)"
+          echo "install name: $id"
+          deps="$(otool -L "$LIB" | tail -n +2 | awk '{print $1}' | grep -vxF "$id" || true)"
+          bad="$(echo "$deps" | grep -vE '^(/usr/lib/|/System/Library/)' || true)"
+          [ -z "$bad" ] || { echo "unexpected dependency: $bad"; exit 1; }
+          if otool -l "$LIB" | grep -A2 LC_RPATH; then echo "unexpected LC_RPATH"; exit 1; fi
+          otool -l "$LIB" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX' || true
+          nm -u "$LIB"
+          if nm -u "$LIB" | grep -iE 'SDL|X11|wl_|wayland|xkb'; then echo "unexpected SDL/X11/Wayland import"; exit 1; fi
+          exports="$(nm -gU "$LIB" | awk '{print $3}' | sed 's/^_//' | sort | paste -s -d, -)"
+          echo "exports: $exports"
+          [ "$exports" = "fh_mod_initialize,fh_mod_shutdown,fh_mod_update" ] || { echo "exports must be exactly fh_mod_initialize, fh_mod_shutdown and fh_mod_update"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-cheats-${{ matrix.platform }}
+          path: build/${{ env.PACKAGE }}/
+          if-no-files-found: error
+          overwrite: true
+
+  layout:
+    name: Multi-platform layout
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: player-cheats-*
+          path: package
+          merge-multiple: true
+
+      # Each platform artifact carries its own copy of mod.json (CRLF on Windows
+      # checkouts), so the merged package takes the manifest from this commit.
+      - name: Check merged package
+        run: |
+          set -euo pipefail
+          cp mod.json package/mod.json
+          cd package
+          actual="$(find . -type f | sort)"
+          expected="$(printf '%s\n' ./mod.json \
+            ./lib/windows-amd64/mod.dll \
+            ./lib/linux-amd64/mod.so \
+            ./lib/linux-arm64/mod.so \
+            ./lib/macos-arm64/mod.so \
+            ./lib/macos-x86_64/mod.so | sort)"
+          echo "$actual"
+          [ "$actual" = "$expected" ] || { echo "unexpected merged layout, expected:"; echo "$expected"; exit 1; }
+          file lib/*/*
+          file lib/windows-amd64/mod.dll | grep -E 'PE32\+ .*DLL.*x86-64' > /dev/null
+          file lib/linux-amd64/mod.so | grep 'ELF 64-bit LSB shared object, x86-64' > /dev/null
+          file lib/linux-arm64/mod.so | grep 'ELF 64-bit LSB shared object, ARM aarch64' > /dev/null
+          file lib/macos-arm64/mod.so | grep -E 'Mach-O 64-bit .*arm64' > /dev/null
+          file lib/macos-x86_64/mod.so | grep -E 'Mach-O 64-bit .*x86_64' > /dev/null
+          cat mod.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-cheats-all-platforms
+          path: package/
+          if-no-files-found: error
+          overwrite: true
