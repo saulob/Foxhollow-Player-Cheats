@@ -1,9 +1,9 @@
 {
   "id": "com.saulob.cheats-player",
   "name": "Cheats - Player",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "author": "saulob",
-  "description": "Player cheats for Star Fox Adventures using keys 1-4 on the number row or numpad: God Mode (1), Fast Movement 2x for running, ladders and swimming (2), Infinite Magic (3) and Infinite Tricky Energy (4)",
+  "description": "Player cheats for Star Fox Adventures using keys 1-5 on the number row or numpad: God Mode (1), Fast Movement 2x (2), Ladder Speed 2x/4x (3), Infinite Magic (4) and Infinite Tricky Energy (5)",
   "compatibility": {
     "abi": 2
   }

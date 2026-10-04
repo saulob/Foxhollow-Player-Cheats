@@ -7,10 +7,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-/* Keys indexed by Cheat: 1 God Mode, 2 Fast Movement, 3 Infinite Magic, 4 Infinite Tricky Energy.
+/* Keys indexed by Cheat: 1 God Mode, 2 Fast Movement, 3 Ladder Speed, 4 Infinite Magic, 5 Infinite Tricky Energy.
    Each cheat accepts its number-row key or the matching numpad key. */
-static const int kCheatKeys[CHEAT_COUNT] = {'1', '3', '2', '4'};
-static const int kCheatNumpadKeys[CHEAT_COUNT] = {VK_NUMPAD1, VK_NUMPAD3, VK_NUMPAD2, VK_NUMPAD4};
+static const int kCheatKeys[CHEAT_COUNT] = {'1', '2', '3', '4', '5'};
+static const int kCheatNumpadKeys[CHEAT_COUNT] = {VK_NUMPAD1, VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD4, VK_NUMPAD5};
 
 static const FhModHost* H;
 static FhMod* M;
@@ -52,7 +52,9 @@ FH_MOD_EXPORT int fh_mod_initialize(FhMod* mod, const FhModHost* host) {
     modLog(FH_LOG_ERROR, "disabled: required host symbols or hooks are unavailable");
     return FH_MOD_ERROR;
   }
-  modLog(FH_LOG_INFO, "v1.0.2 loaded (1 God Mode, 2 Fast Movement, 3 Infinite Magic, 4 Infinite Tricky Energy)");
+  modLog(FH_LOG_INFO,
+         "v1.1.0 loaded (1 God Mode, 2 Fast Movement, 3 Ladder Speed 2x/4x, 4 Infinite Magic, "
+         "5 Infinite Tricky Energy)");
   return FH_MOD_OK;
 }
 

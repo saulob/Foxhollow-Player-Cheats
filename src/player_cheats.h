@@ -57,13 +57,23 @@ typedef struct PlayerCheatsGame {
   void (*playerAddRemoveMagic)(GameObject* obj, int amount);
 } PlayerCheatsGame;
 
+/* In key order: each cheat's index plus one is its number key. */
 typedef enum Cheat {
   CHEAT_GOD_MODE,
-  CHEAT_INFINITE_MAGIC,
   CHEAT_FAST_MOVEMENT,
+  CHEAT_LADDER_SPEED,
+  CHEAT_INFINITE_MAGIC,
   CHEAT_INFINITE_TRICKY_ENERGY,
   CHEAT_COUNT
 } Cheat;
+
+/* gCheatOn[CHEAT_LADDER_SPEED] holds one of these; the other cheats are 0 or 1. */
+typedef enum LadderSpeedMode {
+  LADDER_SPEED_OFF,
+  LADDER_SPEED_2X,
+  LADDER_SPEED_4X,
+  LADDER_SPEED_MODES
+} LadderSpeedMode;
 
 extern PlayerCheatsGame game;
 extern const char* const gCheatNames[CHEAT_COUNT];

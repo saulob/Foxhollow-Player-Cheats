@@ -42,12 +42,23 @@ typedef struct MagicGuard {
   int16_t magic;
 } MagicGuard;
 
+/* The climb speed Ladder Speed last stored, and the game's own value it was
+   made from. state is NULL when the stored speed is the game's own. */
+typedef struct ClimbSpeed {
+  PlayerState* state;
+  float game;
+  float scaled;
+} ClimbSpeed;
+
 PlayerCheatsGame game;
 
 static GameObject* sMessageObj;
 static GameObject* sHitObj;
 static HealthGuard sHitGuard;
 static GameObject* sMainMoveObj;
+static ClimbSpeed sClimbSpeed;
+static GameObject* sLadderMountObj;
+static float sLadderMountScale;
 
 static void (*origPlayerAddHealth)(GameObject*, int);
 static void (*origPlayerProcessMessages)(GameObject*, PlayerState*, PlayerState*);
@@ -59,6 +70,8 @@ static void (*origPlayerAddRemoveMagic)(GameObject*, int);
 static void (*origPlayerCastSpell)(GameObject*, PlayerState*, int);
 static int (*origPlayerStateClimbWall)(GameObject*, PlayerState*);
 static int (*origPlayerStateOnLadder)(GameObject*, PlayerState*);
+static int (*origPlayerStateClimbOntoLadder)(GameObject*, PlayerState*, float);
+static int (*origObjectObjAnimAdvanceMove)(void*, float, float, void*);
 static int (*origObjMove)(GameObject*, float, float, float);
 
 /* God Mode. The game subtracts damage inline in several places, so the hooks
@@ -178,29 +191,92 @@ MAGIC_STATE_HOOK(playerStateShootFireball)
 MAGIC_STATE_HOOK(playerStateTryCastSpell)
 MAGIC_STATE_HOOK(playerStateAimStaff)
 
-/* Fast Movement. Climbing and ladder states return 0 only on the path that
-   stores the new climb speed; the early exits leave it untouched. */
+/* Ladder Speed. Both climb states start from the speed stored on the last tick
+   and store a speed again before returning 0; the early exits return non-zero
+   and store nothing. Moving computes a fresh speed (signed on ladders, negative
+   going down), but idling on a ladder or wall and getting off a ladder store
+   last tick's speed back unchanged. So the speed this hook stored is swapped
+   back for the game's own value before the state runs, and what the state
+   leaves is scaled once: a scaled speed is never scaled again, and a new mode
+   applies from the next tick. An early exit keeps last tick's speed, so the
+   swapped-back value is scaled again for that tick. */
 
-static int scale_climb_speed(GameObject* obj, PlayerState* state, int result) {
-  if (result == 0 && gCheatOn[CHEAT_FAST_MOVEMENT] && state != NULL && obj == game.Obj_GetPlayerObject()) {
-    state->moveSpeed *= FAST_MOVEMENT_SCALE;
+static float ladder_speed_scale(void) {
+  switch (gCheatOn[CHEAT_LADDER_SPEED]) {
+    case LADDER_SPEED_2X:
+      return 2.0f;
+    case LADDER_SPEED_4X:
+      return 4.0f;
+    default:
+      return 1.0f;
+  }
+}
+
+static int run_climb_state(int (*original)(GameObject*, PlayerState*), GameObject* obj, PlayerState* state) {
+  float scale = ladder_speed_scale();
+  int restored = 0;
+  int result;
+
+  if (state != NULL && state == sClimbSpeed.state) {
+    restored = state->moveSpeed == sClimbSpeed.scaled;
+    if (restored) {
+      state->moveSpeed = sClimbSpeed.game;
+    }
+    sClimbSpeed.state = NULL;
+  }
+  result = original(obj, state);
+  if (scale != 1.0f && (result == 0 || restored) && state != NULL && obj == game.Obj_GetPlayerObject()) {
+    sClimbSpeed.state = state;
+    sClimbSpeed.game = state->moveSpeed;
+    state->moveSpeed *= scale;
+    sClimbSpeed.scaled = state->moveSpeed;
   }
   return result;
 }
 
 static int hookPlayerStateClimbWall(GameObject* obj, PlayerState* state) {
-  return scale_climb_speed(obj, state, origPlayerStateClimbWall(obj, state));
+  return run_climb_state(origPlayerStateClimbWall, obj, state);
 }
 
 static int hookPlayerStateOnLadder(GameObject* obj, PlayerState* state) {
-  return scale_climb_speed(obj, state, origPlayerStateOnLadder(obj, state));
+  return run_climb_state(origPlayerStateOnLadder, obj, state);
 }
 
-/* playerUpdate is the only caller of playerUpdateSurfaceResponse. After it
-   returns, playerUpdate runs playerUpdateVelocityFromMotion and clamps the
-   velocity, then calls the objMove that applies the player's velocity, with no
-   other objMove in between. Arming the player here makes that main objMove the
-   next one for the player, so it is the only move scaled. */
+/* Getting onto a ladder is its own state, before playerStateOnLadder. Every
+   tick it stores a fresh speed (0.014 from the bottom, 0.01 from the top),
+   advances one animation layer with it through Object_ObjAnimAdvanceMove and
+   returns 0, and the state machine then advances the other layer with the
+   stored speed. Both layers get the multiplier: the first while the state
+   runs, the second by scaling what it stored. It never reads a speed before
+   storing its own, so this cannot compound. */
+static int hookObjectObjAnimAdvanceMove(void* anim, float moveStepScale, float dt, void* events) {
+  if (anim != NULL && anim == sLadderMountObj) {
+    moveStepScale *= sLadderMountScale;
+  }
+  return origObjectObjAnimAdvanceMove(anim, moveStepScale, dt, events);
+}
+
+static int hookPlayerStateClimbOntoLadder(GameObject* obj, PlayerState* state, float dt) {
+  float scale = ladder_speed_scale();
+  int result;
+
+  sLadderMountObj = scale != 1.0f && obj == game.Obj_GetPlayerObject() ? obj : NULL;
+  sLadderMountScale = scale;
+  result = origPlayerStateClimbOntoLadder(obj, state, dt);
+  if (result == 0 && sLadderMountObj != NULL && state != NULL) {
+    state->moveSpeed *= sLadderMountScale;
+  }
+  sLadderMountObj = NULL;
+  return result;
+}
+
+/* Fast Movement. playerUpdate is the only caller of
+   playerUpdateSurfaceResponse. After it returns, playerUpdate runs
+   playerUpdateVelocityFromMotion and clamps the velocity, then calls the
+   objMove that applies the player's velocity, with no other objMove in between.
+   Arming the player here makes that main objMove the next one for the player,
+   so it is the only move scaled. Ladders and climbable walls belong to Ladder
+   Speed alone. */
 static void arm_main_move(GameObject* obj) {
   sMainMoveObj = gCheatOn[CHEAT_FAST_MOVEMENT] && obj == game.Obj_GetPlayerObject() ? obj : NULL;
 }
@@ -275,9 +351,15 @@ static Hook sInfiniteMagicHooks[] = {
 };
 
 static Hook sFastMovementHooks[] = {
+    {"objMove", (HookFn)hookObjMove, (void**)&origObjMove, NULL},
+};
+
+static Hook sLadderSpeedHooks[] = {
     {"playerStateClimbWall", (HookFn)hookPlayerStateClimbWall, (void**)&origPlayerStateClimbWall, NULL},
     {"playerStateOnLadder", (HookFn)hookPlayerStateOnLadder, (void**)&origPlayerStateOnLadder, NULL},
-    {"objMove", (HookFn)hookObjMove, (void**)&origObjMove, NULL},
+    {"playerStateClimbOntoLadder", (HookFn)hookPlayerStateClimbOntoLadder, (void**)&origPlayerStateClimbOntoLadder,
+     NULL},
+    {"Object_ObjAnimAdvanceMove", (HookFn)hookObjectObjAnimAdvanceMove, (void**)&origObjectObjAnimAdvanceMove, NULL},
 };
 
 /* Installed once for every group that sets needsSharedHooks. */
@@ -290,9 +372,10 @@ static Hook sSharedHooks[] = {
 
 static CheatGroup sGroups[] = {
     {CHEAT_GOD_MODE, kGodModeSymbols, COUNT_OF(kGodModeSymbols), sGodModeHooks, COUNT_OF(sGodModeHooks), 1},
+    {CHEAT_FAST_MOVEMENT, NULL, 0, sFastMovementHooks, COUNT_OF(sFastMovementHooks), 1},
+    {CHEAT_LADDER_SPEED, NULL, 0, sLadderSpeedHooks, COUNT_OF(sLadderSpeedHooks), 0},
     {CHEAT_INFINITE_MAGIC, kInfiniteMagicSymbols, COUNT_OF(kInfiniteMagicSymbols), sInfiniteMagicHooks,
      COUNT_OF(sInfiniteMagicHooks), 0},
-    {CHEAT_FAST_MOVEMENT, NULL, 0, sFastMovementHooks, COUNT_OF(sFastMovementHooks), 1},
     {CHEAT_INFINITE_TRICKY_ENERGY, kTrickySymbols, COUNT_OF(kTrickySymbols), NULL, 0, 0},
 };
 
@@ -387,5 +470,7 @@ void playerHooksRemove(FhMod* mod, const FhModHost* host) {
   sHitObj = NULL;
   sHitGuard.status = NULL;
   sMainMoveObj = NULL;
+  sClimbSpeed.state = NULL;
+  sLadderMountObj = NULL;
   memset(&game, 0, sizeof(game));
 }

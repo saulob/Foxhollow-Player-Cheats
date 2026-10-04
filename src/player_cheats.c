@@ -7,7 +7,9 @@
 #define UI_DLL_FRONTEND_FIRST 2
 #define UI_DLL_FRONTEND_LAST 7
 
-const char* const gCheatNames[CHEAT_COUNT] = {"God Mode", "Infinite Magic", "Fast Movement", "Infinite Tricky Energy"};
+const char* const gCheatNames[CHEAT_COUNT] = {"God Mode", "Fast Movement", "Ladder Speed", "Infinite Magic",
+                                              "Infinite Tricky Energy"};
+static const char* const kLadderSpeedModeNames[LADDER_SPEED_MODES] = {"disabled", "2x", "4x"};
 
 unsigned char gCheatOn[CHEAT_COUNT];
 unsigned char gCheatAvailable[CHEAT_COUNT];
@@ -87,6 +89,12 @@ static void fill_tricky_energy(void) {
 static void toggle(Cheat cheat) {
   if (!gCheatAvailable[cheat]) {
     modLog(FH_LOG_WARN, "%s is unavailable in this Foxhollow build", gCheatNames[cheat]);
+    return;
+  }
+  /* Ladder Speed cycles Off -> 2x -> 4x -> Off instead of toggling. */
+  if (cheat == CHEAT_LADDER_SPEED) {
+    gCheatOn[cheat] = (unsigned char)((gCheatOn[cheat] + 1) % LADDER_SPEED_MODES);
+    modLog(FH_LOG_INFO, "%s %s", gCheatNames[cheat], kLadderSpeedModeNames[gCheatOn[cheat]]);
     return;
   }
   if (!gCheatOn[cheat]) {
